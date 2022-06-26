@@ -26,6 +26,8 @@ static HIGH_AVERAGE_PRICE_SELLING_MULTIPLIER: f64 = 10.0; // Start selling at a 
 static LOW_AVERAGE_PRICE_SELLING_MULTIPIER: f64 = 1.1; // Sell 10% above average price at most
 static AVERAGE_PRICE_BUYING_MULTIPIER: f64 = 1.1; // Buy 10% above average price at most
 
+static PIGGYBANK_DIVIDER: f64 = 3.0; // Divide price by this amount to get the amount to put in the piggybank
+
 // Battleplan:
 
 // Loop every 30s
@@ -107,7 +109,7 @@ pub async fn play(client: &mut Client) {
 
         // Put half of our winnings in our piggybank
         let earnings = client.player.money - old_player.money;
-        piggybank += earnings / 2.0;
+        piggybank += earnings / PIGGYBANK_DIVIDER;
 
         println!(
             "Player money: {} (earned {})",
@@ -115,7 +117,11 @@ pub async fn play(client: &mut Client) {
             client.player.money - old_player.money
         );
 
-        println!("Piggybank: {} (added {})", piggybank, earnings / 2.0);
+        println!(
+            "Piggybank: {} (added {})",
+            piggybank,
+            earnings / PIGGYBANK_DIVIDER
+        );
 
         let own_listings = client.get_own_listings();
 
