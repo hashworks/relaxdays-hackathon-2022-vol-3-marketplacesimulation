@@ -107,21 +107,24 @@ pub async fn play(client: &mut Client) {
             continue;
         }
 
-        // Put half of our winnings in our piggybank
-        let earnings = client.player.money - old_player.money;
-        piggybank += earnings / PIGGYBANK_DIVIDER;
-
         println!(
             "Player money: {} (earned {})",
             client.player.money,
             client.player.money - old_player.money
         );
 
-        println!(
-            "Piggybank: {} (added {})",
-            piggybank,
-            earnings / PIGGYBANK_DIVIDER
-        );
+        // If we have some buffer…
+        if client.player.money - piggybank > 500.0 {
+            // …put some of our earnings in our virtual piggybank
+            let earnings = client.player.money - old_player.money;
+            piggybank += earnings / PIGGYBANK_DIVIDER;
+
+            println!(
+                "Piggybank: {} (added {})",
+                piggybank,
+                earnings / PIGGYBANK_DIVIDER
+            );
+        }
 
         let own_listings = client.get_own_listings();
 
