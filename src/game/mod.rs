@@ -21,7 +21,7 @@ static TAG_LEVEL_BUY_THRESHOLD: usize = 1;
 
 // In my tests the simulated customers had no problem with a 10x price increase, anything higher will scare them off though.
 // However, if other players other the same article for a lower price they will prefer that one.
-static HIGH_AVERAGE_PRICE_SELLING_MULTIPLIER: f64 = 10.0; // Start selling at twice the average price
+static HIGH_AVERAGE_PRICE_SELLING_MULTIPLIER: f64 = 10.0; // Start selling at a much higher price
 
 static LOW_AVERAGE_PRICE_SELLING_MULTIPIER: f64 = 1.1; // Sell 10% above average price at most
 static AVERAGE_PRICE_BUYING_MULTIPIER: f64 = 1.1; // Buy 10% above average price at most
