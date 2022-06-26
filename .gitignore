@@ -1,0 +1,5 @@
+/target/
+/solutions
+/instances
+/.vscode
+.env
