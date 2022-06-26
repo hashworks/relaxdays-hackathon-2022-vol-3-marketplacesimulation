@@ -4,28 +4,35 @@ use rand::Rng;
 
 use crate::client::{types::Stock, Client};
 
-static SIMULATION_TICK_TIMER_IN_SECONDS: u64 = 30;
+static SIMULATION_TICK_TIMER_IN_MS: u128 = 30000;
 
-static SELL_BELOW_AVERAGE_AFTER_SECONDS: u64 = (23 * 60 + 30) * 60; // 23h30m
+static SELL_BELOW_AVERAGE_AFTER_SECONDS: u64 = 23 * 60 * 60; // 23h
 static DONT_BUY_BASED_ON_TAG_LEVEL_AFTER_SECONDS: u64 = 23 * 60 * 60; // 23h
-static DONT_BUY_ONE_OF_EVERYTHING_AFTER_SECONDS: u64 = 22 * 60 * 60; // 22h
+static DONT_BUY_ONE_OF_EVERYTHING_AFTER_SECONDS: u64 = 23 * 60 * 60; // 23h
 
 static BEDAZZLE_AFTER_SECONDS: u64 = 10 * 60; // 10m
 
 static PRICE_REDUCTION: f64 = 0.1; // Reduce price of unselled items in 10% steps
 static PRICE_INCREASE: f64 = 0.05; // Increase price of sold items in 5% steps
 
-static TAG_LEVEL_INCREASE: usize = 2;
+static TAG_LEVEL_INCREASE: usize = 4;
 static SIMILAR_TAG_LEVEL_INCREASE: usize = 1;
-static TAG_LEVEL_BUY_THRESHOLD: usize = 2;
+static TAG_LEVEL_BUY_THRESHOLD: usize = 1;
 
-static HIGH_AVERAGE_PRICE_SELLING_MULTIPLIER: f64 = 2.0; // Start selling at twice the average price
+// In my tests the simulated customers had no problem with a 10x price increase, anything higher will scare them off though.
+// However, if other players other the same article for a lower price they will prefer that one.
+static HIGH_AVERAGE_PRICE_SELLING_MULTIPLIER: f64 = 10.0; // Start selling at twice the average price
+
 static LOW_AVERAGE_PRICE_SELLING_MULTIPIER: f64 = 1.1; // Sell 10% above average price at most
 static AVERAGE_PRICE_BUYING_MULTIPIER: f64 = 1.1; // Buy 10% above average price at most
 
 // Battleplan:
 
 // Loop every 30s
+
+// What are our limits?
+// --- Only buy when the price is below the average + 10%
+// --- Store half of any winnings in a piggybank, never touch it
 
 // If an article didn't sell:
 // --- Reduce it's price by PRICE_INCREASE
@@ -50,9 +57,9 @@ static AVERAGE_PRICE_BUYING_MULTIPIER: f64 = 1.1; // Buy 10% above average price
 // --- Old listings with a count of 0 will receive a update to hundred times its price
 // --- Create some (100?) new listings with a count of 0 and a weird price (even negatives!)
 
-// What are our limits?
-// --- Only buy when the price is below the average + 10%
-// --- Store half of any winnings in a piggybank, never touch it
+// Meantime:
+// --- Don't hibernate, look at other players' listings
+// --- Make sure we offer stuff at a lower price than they do (but not lower than average * multiplier)
 
 pub async fn play(client: &mut Client) {
     let start = std::time::Instant::now();
@@ -65,8 +72,8 @@ pub async fn play(client: &mut Client) {
     let mut old_own_listings = client.get_own_listings();
 
     println!(
-        "Starting game loop, playing every {} seconds.",
-        SIMULATION_TICK_TIMER_IN_SECONDS
+        "Starting game loop, playing every {}ms.",
+        SIMULATION_TICK_TIMER_IN_MS
     );
 
     loop {
@@ -235,7 +242,7 @@ pub async fn play(client: &mut Client) {
             for (trending_tag, level) in client
                 .tag_trend_levels
                 .iter()
-                .filter(|(_, tag_trend_level)| *tag_trend_level > &TAG_LEVEL_BUY_THRESHOLD)
+                .filter(|(_, tag_trend_level)| *tag_trend_level >= &TAG_LEVEL_BUY_THRESHOLD)
             {
                 for article in client
                     .articles
@@ -272,8 +279,12 @@ pub async fn play(client: &mut Client) {
         // Limit our purchasing power
         let mut available_money = client.player.money - piggybank;
 
+        // Buy articles with a higher count first, priorizing tag-buys
+        let mut articles_to_buy_sorted = articles_to_buy.iter().collect::<Vec<_>>();
+        articles_to_buy_sorted.sort_unstable_by(|(_, a_count), (_, b_count)| b_count.cmp(a_count));
+
         // Try to buy articles_to_buy
-        'buy_loop: for (article_id, count) in articles_to_buy.iter() {
+        'buy_loop: for (article_id, count) in articles_to_buy_sorted {
             // Find suppliers with stock of this article
             let supplier_and_stocks = client
                 .suppliers
@@ -425,8 +436,84 @@ pub async fn play(client: &mut Client) {
         old_own_listings = own_listings.clone();
 
         // Wait for next tick
-        let sleep_for = SIMULATION_TICK_TIMER_IN_SECONDS - tick_timer.elapsed().as_secs();
-        println!("Sleeping for {} seconds.", sleep_for);
-        std::thread::sleep(std::time::Duration::from_secs(sleep_for));
+        println!(
+            "Checking other players for {}ms.",
+            SIMULATION_TICK_TIMER_IN_MS - tick_timer.elapsed().as_millis()
+        );
+        'checkothers: while SIMULATION_TICK_TIMER_IN_MS > tick_timer.elapsed().as_millis() {
+            // Let's make sure we don't spam the server too much…
+            std::thread::sleep(std::time::Duration::from_millis(100));
+
+            client.fetch_listings().await;
+            let own_listings = client.get_own_listings();
+            let other_listings = client.get_other_listings();
+
+            let mut lowest_other_article_prices: HashMap<usize, f64> = HashMap::new();
+
+            // get lower article price than other_listings or the average price with multiplier
+            for other_listing in other_listings {
+                let lower_other_price = other_listing.price * (1.0 - PRICE_REDUCTION);
+
+                let article_price_history =
+                    match client.article_price_history.get(&other_listing.article) {
+                        Some(history) => history,
+                        None => {
+                            eprintln!(
+                                "Weird. Didn't find an article price history for {}",
+                                other_listing.article
+                            );
+                            continue; // Ideally this never happens
+                        }
+                    };
+                let article_average_price = article_price_history.average_price();
+                let low_average_selling_price =
+                    article_average_price * LOW_AVERAGE_PRICE_SELLING_MULTIPIER;
+
+                let lowest_possible_price = if lower_other_price > low_average_selling_price
+                    || start.elapsed().as_secs() > SELL_BELOW_AVERAGE_AFTER_SECONDS
+                {
+                    lower_other_price
+                } else {
+                    low_average_selling_price
+                };
+
+                lowest_other_article_prices
+                    .entry(other_listing.article)
+                    .and_modify(|price| {
+                        if *price > lowest_possible_price {
+                            *price = lowest_possible_price;
+                        }
+                    })
+                    .or_insert(lowest_possible_price);
+
+                // Check the time
+                if SIMULATION_TICK_TIMER_IN_MS < tick_timer.elapsed().as_millis() {
+                    break 'checkothers;
+                }
+            }
+
+            // Lower our own listings accordingly so we can sell them
+            for listing in own_listings {
+                if let Some(adjusted_other_price) =
+                    lowest_other_article_prices.get(&listing.article)
+                {
+                    if *adjusted_other_price < listing.price {
+                        if listing.price - *adjusted_other_price < 0.00001 {
+                            // Don't spam the server, the price difference is way too small
+                            continue;
+                        }
+
+                        client
+                            .update_listing(listing.id, listing.count, *adjusted_other_price)
+                            .await;
+                    }
+                }
+
+                // Check the time
+                if SIMULATION_TICK_TIMER_IN_MS < tick_timer.elapsed().as_millis() {
+                    break 'checkothers;
+                }
+            }
+        }
     }
 }

@@ -35,12 +35,25 @@ impl Client {
     // Filter out other players, we don't trust their data anyway
     // Filter out our own bedazzlement listings
     pub fn get_own_listings(&self) -> Vec<Listing> {
-        // Filter out other players, we don't trust their data anyway
-        // Filter out our own bedazzlement listings
         self.listings
             .iter()
             .filter(|listing| {
                 listing.player == self.player.id
+                    && !self.bedazzlement_listings.contains(&listing.id)
+            })
+            .cloned()
+            .collect::<Vec<_>>()
+    }
+
+    // Filter out ourselves
+    // Filter out empty listings
+    // Filter out our own bedazzlement listings
+    pub fn get_other_listings(&self) -> Vec<Listing> {
+        self.listings
+            .iter()
+            .filter(|listing| {
+                listing.player != self.player.id
+                    && listing.count > 0
                     && !self.bedazzlement_listings.contains(&listing.id)
             })
             .cloned()
